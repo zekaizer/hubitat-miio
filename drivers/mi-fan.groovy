@@ -112,8 +112,13 @@ def updated() {
 
 def initialize() {
     unschedule()
+    // Kept across the reset: it is what the fan had before the night values were written.
+    Map beforeNight = state.beforeNight
     state.clear()
     state.queue = []
+    if (beforeNight) {
+        state.beforeNight = beforeNight
+    }
     sendEvent(name: "supportedFanSpeeds", value: JsonOutput.toJson(SPEEDS + ["on", "off"]))
     if (!settings.ip || !settings.token) {
         sendEvent(name: "connection", value: "unconfigured")
@@ -139,6 +144,11 @@ def configureDevice(String json) {
 // ---- commands ----
 
 def refresh() {
+    // Scheduled first: a failure below must not end the polling.
+    Integer every = (settings.pollSeconds ?: 30) as Integer
+    if (every > 0) {
+        runIn(every, "refresh")
+    }
     // Until the model is known nothing else can be sent in the right dialect.
     if (profile()) {
         // A read between two steps of a jog would make the steps uneven.
@@ -147,10 +157,6 @@ def refresh() {
         }
     } else if (!queued("info")) {
         enqueue("miIO.info", [], "info")
-    }
-    Integer every = (settings.pollSeconds ?: 30) as Integer
-    if (every > 0) {
-        runIn(every, "refresh")
     }
 }
 
@@ -174,8 +180,10 @@ def setLevel(level, duration = null) {
     Boolean isOn = device.currentValue("switch") == "on"
     publish([power: true, level: value])
     if (isMiot()) {
-        // Power first: the device ignores a level written before the power in the same request.
-        miotSet(isOn ? [level: value] : [power: true, level: value])
+        // The power always goes with the level: the fan may have been switched off since the
+        // last read, and a level alone is stored without turning it on. Power first: the device
+        // ignores a level written before the power in the same request.
+        miotSet([power: true, level: value])
     } else {
         if (!isOn) {
             // set_speed_level answers device_poweroff while the fan is off.
@@ -205,12 +213,12 @@ def cycleSpeed() {
 }
 
 def setOscillation(String value) {
-    if (!requireOn("setOscillation")) {
-        // The switch was not changed, but whoever asked may already show the new value.
-        childSwitch("oscillation", device.currentValue("oscillation") == "on", true)
-        return
+    if (requireOn("setOscillation", [value])) {
+        applyOscillation(value == "on")
     }
-    Boolean enable = value == "on"
+}
+
+private void applyOscillation(Boolean enable) {
     publish([oscillation: enable])
     if (isMiot()) {
         miotSet([oscillation: enable])
@@ -221,7 +229,7 @@ def setOscillation(String value) {
 }
 
 def setOscillationAngle(angle) {
-    if (!requireOn("setOscillationAngle")) {
+    if (!ready()) {
         return
     }
     Integer value = angle as Integer
@@ -229,6 +237,12 @@ def setOscillationAngle(angle) {
         log.warn "unsupported angle ${value}; supported: ${profile().angles}"
         return
     }
+    if (requireOn("setOscillationAngle", [value])) {
+        applyOscillationAngle(value)
+    }
+}
+
+private void applyOscillationAngle(Integer value) {
     publish([angle: value, oscillation: true])
     if (isMiot()) {
         // Swing is turned on as well, because set_angle does that on the legacy model.
@@ -239,13 +253,16 @@ def setOscillationAngle(angle) {
 }
 
 def setWindMode(String mode) {
-    if (!requireOn("setWindMode")) {
-        return
-    }
     if (!(mode in ["normal", "natural"])) {
         log.warn "unsupported wind mode ${mode}"
         return
     }
+    if (requireOn("setWindMode", [mode])) {
+        applyWindMode(mode)
+    }
+}
+
+private void applyWindMode(String mode) {
     publish([mode: mode])
     if (isMiot()) {
         miotSet([mode: mode])
@@ -255,13 +272,16 @@ def setWindMode(String mode) {
 }
 
 def move(String direction) {
-    if (!requireOn("move")) {
-        return
-    }
     if (!(direction in ["left", "right"])) {
         log.warn "unsupported direction ${direction}"
         return
     }
+    if (requireOn("move", [direction])) {
+        applyMove(direction)
+    }
+}
+
+private void applyMove(String direction) {
     stopOscillation()
     enqueueMove(direction)
 }
@@ -279,7 +299,12 @@ void componentOff(cd) {
     String key = childKey(cd)
     if (key == "oscillation") {
         setOscillation("off")
-    } else if (state.jog?.direction == key - "move-") {
+        return
+    }
+    String direction = key - "move-"
+    // A jog that still waits for the state to be read must not start after its switch is off.
+    state.pending = (state.pending ?: []).findAll { !(it.command == "jog" && it.args[0] == direction) }
+    if (state.jog?.direction == direction) {
         endJog()
         resumePolling()
     } else {
@@ -288,7 +313,8 @@ void componentOff(cd) {
 }
 
 void componentRefresh(cd) {
-    poll()
+    // refresh() knows what to send while the model is still unknown.
+    refresh()
 }
 
 private void setPower(Boolean value) {
@@ -316,15 +342,52 @@ private Boolean ready() {
 }
 
 // Both models are made to refuse these while off; only the legacy one does so by itself.
-private Boolean requireOn(String command) {
+// The switch state held here can be one poll interval old, so a command is not refused on it:
+// the state is read and settle() decides the command on that reading. Returns true when the
+// caller may go ahead now.
+private Boolean requireOn(String command, List args) {
     if (!ready()) {
         return false
     }
-    if (device.currentValue("switch") != "on") {
-        log.warn "${command} ignored: the fan is off"
-        return false
+    if (device.currentValue("switch") == "on") {
+        return true
     }
-    return true
+    state.pending = (state.pending ?: []) + [[command: command, args: args]]
+    poll()
+    return false
+}
+
+// Called with a fresh reading, or with none when the fan does not answer.
+private void settle(Map s) {
+    List pending = state.pending ?: []
+    state.remove("pending")
+    pending.each { Map p ->
+        if (s?.power) {
+            perform(p)
+        } else {
+            refuse(p, s)
+        }
+    }
+}
+
+private void perform(Map p) {
+    switch (p.command) {
+        case "setOscillation": applyOscillation(p.args[0] == "on"); break
+        case "setOscillationAngle": applyOscillationAngle(p.args[0] as Integer); break
+        case "setWindMode": applyWindMode(p.args[0] as String); break
+        case "move": applyMove(p.args[0] as String); break
+        case "jog": applyJog(p.args[0] as String); break
+    }
+}
+
+private void refuse(Map p, Map s) {
+    log.warn "${p.command == 'jog' ? 'move' : p.command} ignored: the fan ${s ? 'is off' : 'does not answer'}"
+    // The switch was not changed, but whoever asked may already show the new value.
+    if (p.command == "setOscillation") {
+        childSwitch("oscillation", (s?.oscillation ?: false) as Boolean, true)
+    } else if (p.command == "jog") {
+        childSwitch("move-${p.args[0]}", false, true)
+    }
 }
 
 private Map profile() {
@@ -358,10 +421,12 @@ private void miotSet(Map values) {
 // ---- move: one step per request, repeated while a move switch is on ----
 
 private void startJog(String direction) {
-    if (!requireOn("move")) {
-        childSwitch("move-${direction}", false, true)
-        return
+    if (requireOn("jog", [direction])) {
+        applyJog(direction)
     }
+}
+
+private void applyJog(String direction) {
     if (state.jog) {
         endJog()
     }
@@ -407,9 +472,10 @@ private void resumePolling() {
 }
 
 // zhimi.fan.za1 answers device_busy to a move while it swings.
+// The confirmed value counts too: right after a read the attribute may not show it yet.
 private void stopOscillation() {
-    if (device.currentValue("oscillation") == "on") {
-        setOscillation("off")
+    if (device.currentValue("oscillation") == "on" || state.confirmed?.oscillation) {
+        applyOscillation(false)
     }
 }
 
@@ -428,24 +494,57 @@ private Boolean isNight() {
     return names.contains(location.mode?.toString()?.toLowerCase())
 }
 
+private Boolean kept(pref) {
+    return pref in ["on", "off"]
+}
+
+// While it is night, remembers what the fan had for each setting that the night overrides and
+// that no day preference would put back. Those values are written back when the night ends.
+private void trackNight(Map current, Boolean night) {
+    Map before = (state.beforeNight ?: [:]) as Map
+    if (night) {
+        ENFORCED.each { String key ->
+            if (kept(settings[key + "Night"]) && !kept(settings[key + "Day"]) && !before.containsKey(key)) {
+                before[key] = current[key]
+            }
+        }
+        state.beforeNight = before
+        return
+    }
+    if (!before) {
+        return
+    }
+    state.remove("beforeNight")
+    Map restore = before.findAll { key, value -> !kept(settings[key + "Day"]) && current[key] != value }
+    if (restore) {
+        log.info "the night is over, putting back: ${restore}"
+        writeKept(restore)
+    }
+}
+
 private void enforce(Map current, Boolean night) {
     Map wanted = [:]
     ENFORCED.each { String key ->
         String pref = settings[key + "Day"]
         String atNight = settings[key + "Night"]
-        if (night && atNight in ["on", "off"]) {
+        if (night && kept(atNight)) {
             pref = atNight
         }
-        if (pref in ["on", "off"] && current[key] != (pref == "on")) {
+        if (kept(pref) && current[key] != (pref == "on")) {
             wanted[key] = (pref == "on")
         }
     }
-    // A fan that does not take the value must not be written to on every reply.
+    // Not more often than ENFORCE_INTERVAL_MS: the read after a write comes back at once, and a
+    // fan that refuses the value would be written to in a loop.
     if (!wanted || now() - ((state.enforcedAt ?: 0) as Long) < ENFORCE_INTERVAL_MS) {
         return
     }
     state.enforcedAt = now()
     log.info "restoring kept settings: ${wanted}"
+    writeKept(wanted)
+}
+
+private void writeKept(Map wanted) {
     if (isMiot()) {
         miotSet(wanted)
         return
@@ -466,9 +565,9 @@ private Boolean queued(String kind) {
     return (state.queue ?: []).any { it.kind == kind } || state.inflight?.kind == kind
 }
 
-private void enqueue(String method, List params, String kind) {
+private void enqueue(String method, List params, String kind, Boolean retried = false) {
     List queue = state.queue ?: []
-    queue << [method: method, params: params, kind: kind, tries: 0]
+    queue << [method: method, params: params, kind: kind, retried: retried]
     state.queue = queue
     pump()
 }
@@ -479,8 +578,8 @@ private void pump() {
     }
     if (now() - ((state.handshakeAt ?: 0) as Long) > HANDSHAKE_TTL_MS) {
         state.awaitingHello = true
-        sendHex(HELLO)
         runIn(REPLY_TIMEOUT_S, "onTimeout")
+        sendHex(HELLO)
         return
     }
     List queue = state.queue
@@ -491,13 +590,17 @@ private void pump() {
     state.msgId = id
     item.id = id
     state.inflight = item
-    sendHex(buildPacket(JsonOutput.toJson([id: id, method: item.method, params: item.params])))
+    // Armed before the send: without it a request that fails to go out stays in flight for good.
     runIn(REPLY_TIMEOUT_S, "onTimeout")
+    sendHex(buildPacket(JsonOutput.toJson([id: id, method: item.method, params: item.params])))
 }
 
 // A dropped packet, a wrong token and an absent fan all look the same: no reply.
 def onTimeout() {
     Map item = state.inflight
+    if (state.awaitingHello) {
+        state.handshakeAnswered = false
+    }
     state.inflight = null
     state.awaitingHello = false
     state.remove("handshakeAt")
@@ -509,11 +612,22 @@ def onTimeout() {
     List queue = state.queue ?: []
     Integer failures = ((state.failures ?: 0) as Integer) + 1
     if (failures > MAX_RETRIES) {
-        log.warn "no reply from ${settings.ip}; dropping ${queue.size() + (item ? 1 : 0)} request(s)"
+        // Reported when the fan stops answering, not again on every poll while it stays silent.
+        if (device.currentValue("connection") != "offline") {
+            // A fan does not answer a packet made with the wrong token.
+            log.warn state.handshakeAnswered ?
+                "${settings.ip} answers the handshake but not requests: check the device token" :
+                "no reply from ${settings.ip}"
+        }
         endJog()
         state.queue = []
         state.failures = 0
         sendEvent(name: "connection", value: "offline")
+        // The dropped writes were reported as done when they were asked for.
+        if (state.confirmed) {
+            publish(state.confirmed as Map)
+        }
+        settle(null)
         return
     }
     state.failures = failures
@@ -564,7 +678,13 @@ def parse(String description) {
         return
     }
     if (hex.length() == 64) {
+        // A handshake reply nobody waits for is late or repeated. Acting on it would cancel the
+        // timeout of the request in flight.
+        if (!state.awaitingHello) {
+            return
+        }
         // Handshake reply: 32-byte header carrying the device id and its clock.
+        state.handshakeAnswered = true
         state.deviceId = hex.substring(16, 24)
         state.deviceStamp = Long.parseLong(hex.substring(24, 32), 16)
         state.handshakeAt = now()
@@ -597,6 +717,9 @@ private void handle(Map item, Map reply) {
     // The miIO.info result contains the device token, so it is never logged.
     if (logEnable && item.kind != "info") {
         log.debug "${item.method} ${item.params} -> ${reply.result ?: reply.error}"
+    }
+    if (poweredOffElsewhere(item, reply)) {
+        return
     }
     if (reply.error) {
         log.warn "${item.method} ${item.kind == 'set' ? item.params : ''} failed: ${reply.error.code} ${reply.error.message}"
@@ -631,6 +754,18 @@ private void handle(Map item, Map reply) {
             }
             break
     }
+}
+
+// zhimi.fan.za1 refuses a level while it is off. setLevel sends the power first when the fan is
+// known to be off; this is for a fan switched off elsewhere since the last read. The power is
+// sent and the level once more.
+private Boolean poweredOffElsewhere(Map item, Map reply) {
+    if (reply.error?.code != -6011 || item.retried || !(item.method in ["set_speed_level", "set_natural_level"])) {
+        return false
+    }
+    enqueue("set_power", ["on"], "set")
+    enqueue(item.method as String, item.params as List, "set", true)
+    return true
 }
 
 // miot answers each item with its own code. Returns whether any item was refused.
@@ -688,9 +823,15 @@ private void applyState(Map s) {
         return
     }
     Boolean night = isNight()
+    if (device.currentValue("connection") == "offline") {
+        log.info "${settings.ip} answers again"
+    }
     sendEvent(name: "connection", value: "online")
     sendEvent(name: "nightMode", value: night ? "on" : "off")
+    state.confirmed = s
     publish(s)
+    settle(s)
+    trackNight(s, night)
     enforce(s, night)
 }
 
