@@ -124,6 +124,9 @@ immediately afterwards already returns the new value.
 - `set_angle` accepts 30, 60, 90, 120 and also 45 and 0; 140 answers `-5001`.
 - **`set_angle` turns swing on** when it was off.
 - `set_move` takes `"left"` and `"right"`. While swing is on it answers `-6007 device_busy`.
+- Three `set_move` requests sent back to back each answer `["ok"]` in about 200 ms.
+- The head went from one end of its range to the other in 22 `set_move` requests, judged by
+  eye. The angle of one step was not measured.
 
 **Timer**
 
@@ -270,6 +273,12 @@ Writing either property updates the other.
 - `horizontal-angle` accepts `45` with code 0 and reads it back, although the spec lists five
   values.
 - Writing `horizontal-angle` does not turn swing on.
+- `motor-control` written back to back answers code 0 each time, in about 200 ms. Thirty
+  writes in one direction all answered code 0, so the end of the range is not reported.
+- The head went from one end of its range to the other in 27 writes sent about 0.75 s apart,
+  judged by eye. The angle of one step was not measured.
+- **A write that comes too soon is answered with code 0 and skipped.** With 28 writes sent
+  about 0.55 s apart, the head stopped short of the end.
 
 ### Timer
 
