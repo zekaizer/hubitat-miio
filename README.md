@@ -23,6 +23,9 @@ https://raw.githubusercontent.com/zekaizer/hubitat-mifan/main/packageManifest.js
 Manually: paste `drivers/mi-fan.groovy` into *Drivers Code*, then add a virtual device that uses
 the `Mi Fan` driver.
 
+Once the fan answers, a device still named `Mi Fan` is renamed `Mi Fan XXXX`, where `XXXX` is the
+last four digits of the fan's MAC address. A device that was given another name keeps it.
+
 ## Configure
 
 Set these in the device preferences:

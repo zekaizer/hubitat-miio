@@ -39,6 +39,7 @@ import javax.crypto.spec.SecretKeySpec
     ip: "text", token: "password", pollSeconds: "number", nightModes: "text", logEnable: "bool",
     buzzerDay: "enum", lightDay: "enum", lockDay: "enum", buzzerNight: "enum", lightNight: "enum", lockNight: "enum"
 ]
+@Field static final String DRIVER_NAME = "Mi Fan"
 @Field static final String HELLO = "21310020ffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 @Field static final int PORT = 54321
 // zhimi.fan.za1 drops a packet whose stamp is 60 s stale and still accepts 30 s.
@@ -511,6 +512,7 @@ private void applyInfo(Map info) {
     state.model = model
     device.updateDataValue("model", model)
     device.updateDataValue("firmware", info.fw_ver as String)
+    applyDefaultName(info.mac as String)
     if (!MODELS[model]) {
         log.warn "unsupported model ${model}"
         sendEvent(name: "connection", value: "unsupported model")
@@ -590,6 +592,21 @@ private String speedName(Integer level) {
     if (level <= 50) { return "medium-low" }
     if (level <= 75) { return "medium" }
     return "high"
+}
+
+// Tells two fans apart by the last four digits of the MAC address. A device or child whose name
+// was changed keeps it.
+private void applyDefaultName(String mac) {
+    String digits = (mac ?: "").replaceAll("[^0-9A-Fa-f]", "").toUpperCase()
+    if (digits.length() < 4 || device.name != DRIVER_NAME) {
+        return
+    }
+    String name = "${DRIVER_NAME} ${digits.substring(digits.length() - 4)}"
+    def child = getChildDevice(childDni())
+    if (child?.name == "${DRIVER_NAME} Oscillation".toString()) {
+        child.setName("${name} Oscillation")
+    }
+    device.setName(name)
 }
 
 // ---- oscillation child ----
