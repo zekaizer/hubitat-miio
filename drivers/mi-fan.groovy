@@ -288,7 +288,8 @@ void componentOff(cd) {
 }
 
 void componentRefresh(cd) {
-    poll()
+    // refresh() knows what to send while the model is still unknown.
+    refresh()
 }
 
 private void setPower(Boolean value) {
