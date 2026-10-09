@@ -3,10 +3,6 @@
 Homebridge plugin that exposes Xiaomi devices to Apple Home over the LAN with the miio protocol.
 It does not use the Xiaomi cloud.
 
-Up to 0.1.2 this repository was a Hubitat driver package (`hubitat-miio`).
-[ADR 1](docs/adr/0001-homebridge-plugin-instead-of-hubitat-driver.md) records why it moved. The
-last Hubitat driver is at commit `4de32b8`.
-
 ## Supported devices
 
 | Model | Device | Dialect | Status |
