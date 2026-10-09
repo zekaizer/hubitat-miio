@@ -72,6 +72,10 @@ and add them as *Switch* too.
 [docs/local-api.md](docs/local-api.md) records how both models behave on the wire, as measured
 on real devices.
 
+## Tests
+
+The tests run the driver on a real hub against a fake fan. See [tests/README.md](tests/README.md).
+
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE).
