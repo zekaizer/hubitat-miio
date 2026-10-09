@@ -21,9 +21,11 @@ import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
+// moveSteps: move steps from one end of the range to the other. Counted by eye as 22 and 27;
+// the fans do not report the end of the range.
 @Field static final Map<String, Map> MODELS = [
-    "zhimi.fan.za1" : [dialect: "legacy", angles: [30, 60, 90, 120]],
-    "dmaker.fan.p33": [dialect: "miot", angles: [30, 60, 90, 120, 140]]
+    "zhimi.fan.za1" : [dialect: "legacy", angles: [30, 60, 90, 120], moveSteps: 24],
+    "dmaker.fan.p33": [dialect: "miot", angles: [30, 60, 90, 120, 140], moveSteps: 28]
 ]
 @Field static final List<String> LEGACY_PROPS = [
     "power", "speed_level", "angle_enable", "angle", "mode", "buzzer", "led_b", "child_lock"
@@ -36,10 +38,14 @@ import javax.crypto.spec.SecretKeySpec
 @Field static final List<String> SPEEDS = ["low", "medium-low", "medium", "high"]
 @Field static final List<String> ENFORCED = ["buzzer", "light", "lock"]
 @Field static final Map<String, String> SETTING_TYPES = [
-    ip: "text", token: "password", pollSeconds: "number", nightModes: "text", logEnable: "bool",
+    ip: "text", token: "password", pollSeconds: "number", nightModes: "text", logEnable: "bool", moveSwitches: "bool",
     buzzerDay: "enum", lightDay: "enum", lockDay: "enum", buzzerNight: "enum", lightNight: "enum", lockNight: "enum"
 ]
 @Field static final String DRIVER_NAME = "Mi Fan"
+// Child switches, key to name suffix. The move switches exist only while the preference is set.
+@Field static final Map<String, String> CHILDREN = [
+    "oscillation": "Oscillation", "move-left": "Move Left", "move-right": "Move Right"
+]
 @Field static final String HELLO = "21310020ffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 @Field static final int PORT = 54321
 // zhimi.fan.za1 drops a packet whose stamp is 60 s stale and still accepts 30 s.
@@ -48,6 +54,9 @@ import javax.crypto.spec.SecretKeySpec
 @Field static final int REPLY_TIMEOUT_S = 6
 @Field static final int MAX_RETRIES = 2
 @Field static final int ENFORCE_INTERVAL_MS = 10000
+// A jog sends the next step this long after the reply to the previous one. Not shorter:
+// dmaker.fan.p33 answers a step sent 200 ms after the last reply with code 0 and skips it.
+@Field static final int JOG_INTERVAL_MS = 400
 
 metadata {
     definition(name: "Mi Fan", namespace: "zekaizer", author: "Luke Lee", singleThreaded: true,
@@ -68,6 +77,8 @@ metadata {
         command "setOscillation", [[name: "state", type: "ENUM", constraints: ["on", "off"]]]
         command "setOscillationAngle", [[name: "angle", type: "NUMBER"]]
         command "setWindMode", [[name: "mode", type: "ENUM", constraints: ["normal", "natural"]]]
+        // Turns the head one step.
+        command "move", [[name: "direction", type: "ENUM", constraints: ["left", "right"]]]
         // Sets preferences from a JSON object, so a script can configure the device without the UI.
         command "configureDevice", [[name: "settings", type: "STRING"]]
     }
@@ -84,6 +95,8 @@ metadata {
         input name: "buzzerNight", type: "enum", title: "Buzzer at night", options: ["same", "on", "off"], defaultValue: "same"
         input name: "lightNight", type: "enum", title: "Indicator light at night", options: ["same", "on", "off"], defaultValue: "same"
         input name: "lockNight", type: "enum", title: "Child lock at night", options: ["same", "on", "off"], defaultValue: "same"
+        input name: "moveSwitches", type: "bool", title: "Create left and right move switches", defaultValue: false,
+            description: "The head keeps turning while a switch is on and stops when it is turned off."
         input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: false
     }
 }
@@ -106,7 +119,7 @@ def initialize() {
         sendEvent(name: "connection", value: "unconfigured")
         return
     }
-    ensureChild()
+    ensureChildren()
     refresh()
 }
 
@@ -128,7 +141,10 @@ def configureDevice(String json) {
 def refresh() {
     // Until the model is known nothing else can be sent in the right dialect.
     if (profile()) {
-        poll()
+        // A read between two steps of a jog would make the steps uneven.
+        if (!state.jog) {
+            poll()
+        }
     } else if (!queued("info")) {
         enqueue("miIO.info", [], "info")
     }
@@ -190,6 +206,8 @@ def cycleSpeed() {
 
 def setOscillation(String value) {
     if (!requireOn("setOscillation")) {
+        // The switch was not changed, but whoever asked may already show the new value.
+        childSwitch("oscillation", device.currentValue("oscillation") == "on", true)
         return
     }
     Boolean enable = value == "on"
@@ -236,12 +254,37 @@ def setWindMode(String mode) {
     }
 }
 
+def move(String direction) {
+    if (!requireOn("move")) {
+        return
+    }
+    if (!(direction in ["left", "right"])) {
+        log.warn "unsupported direction ${direction}"
+        return
+    }
+    stopOscillation()
+    enqueueMove(direction)
+}
+
 void componentOn(cd) {
-    setOscillation("on")
+    String key = childKey(cd)
+    if (key == "oscillation") {
+        setOscillation("on")
+    } else {
+        startJog(key - "move-")
+    }
 }
 
 void componentOff(cd) {
-    setOscillation("off")
+    String key = childKey(cd)
+    if (key == "oscillation") {
+        setOscillation("off")
+    } else if (state.jog?.direction == key - "move-") {
+        endJog()
+        resumePolling()
+    } else {
+        childSwitch(key, false)
+    }
 }
 
 void componentRefresh(cd) {
@@ -251,6 +294,9 @@ void componentRefresh(cd) {
 private void setPower(Boolean value) {
     if (!ready()) {
         return
+    }
+    if (!value && state.jog) {
+        endJog()
     }
     publish([power: value])
     if (isMiot()) {
@@ -307,6 +353,72 @@ private void miotSet(Map values) {
         [did: key.toString(), siid: id[0], piid: id[1], value: key == "mode" ? (value == "natural" ? 1 : 0) : value]
     }
     enqueue("set_properties", params, "set")
+}
+
+// ---- move: one step per request, repeated while a move switch is on ----
+
+private void startJog(String direction) {
+    if (!requireOn("move")) {
+        childSwitch("move-${direction}", false, true)
+        return
+    }
+    if (state.jog) {
+        endJog()
+    }
+    stopOscillation()
+    state.jog = [direction: direction, steps: 0]
+    childSwitch("move-${direction}", true)
+    jogStep()
+}
+
+// Runs JOG_INTERVAL_MS after the reply to the previous step. The next step is never queued
+// ahead, so turning the switch off stops the head after at most the step already sent.
+def jogStep() {
+    Map jog = state.jog
+    if (!jog) {
+        return
+    }
+    // The head is at the end of the range by now: a move switch left on turns itself off.
+    if ((jog.steps as Integer) >= (profile().moveSteps as Integer)) {
+        endJog()
+        resumePolling()
+        return
+    }
+    jog.steps = (jog.steps as Integer) + 1
+    state.jog = jog
+    enqueueMove(jog.direction as String)
+}
+
+private void endJog() {
+    String direction = state.jog?.direction
+    state.remove("jog")
+    unschedule("jogStep")
+    state.queue = (state.queue ?: []).findAll { it.kind != "move" }
+    if (direction) {
+        childSwitch("move-${direction}", false)
+    }
+}
+
+// The reply to a step still in flight reads the state back by itself.
+private void resumePolling() {
+    if (!queued("move")) {
+        poll()
+    }
+}
+
+// zhimi.fan.za1 answers device_busy to a move while it swings.
+private void stopOscillation() {
+    if (device.currentValue("oscillation") == "on") {
+        setOscillation("off")
+    }
+}
+
+private void enqueueMove(String direction) {
+    if (isMiot()) {
+        enqueue("set_properties", [[did: "move", siid: 6, piid: 1, value: direction == "left" ? 1 : 2]], "move")
+    } else {
+        enqueue("set_move", [direction], "move")
+    }
 }
 
 // ---- kept settings and night mode ----
@@ -389,10 +501,16 @@ def onTimeout() {
     state.inflight = null
     state.awaitingHello = false
     state.remove("handshakeAt")
+    if (item?.kind == "move") {
+        // A step is relative: sent again after a lost reply it could turn the head twice.
+        item = null
+        endJog()
+    }
     List queue = state.queue ?: []
     Integer failures = ((state.failures ?: 0) as Integer) + 1
     if (failures > MAX_RETRIES) {
         log.warn "no reply from ${settings.ip}; dropping ${queue.size() + (item ? 1 : 0)} request(s)"
+        endJog()
         state.queue = []
         state.failures = 0
         sendEvent(name: "connection", value: "offline")
@@ -496,15 +614,30 @@ private void handle(Map item, Map reply) {
             }
             break
         case "set":
-            if (reply.result instanceof List) {
-                reply.result.findAll { it instanceof Map && it.code != 0 }.each { log.warn "${it.did} rejected: code ${it.code}" }
-            }
+            rejected(reply)
             // A set reply carries no state. Read it back once the last queued write is done.
-            if (!queued("set")) {
+            if (!queued("set") && !state.jog) {
                 poll()
             }
             break
+        case "move":
+            if ((reply.error || rejected(reply)) && state.jog) {
+                endJog()
+            }
+            if (state.jog) {
+                runInMillis(JOG_INTERVAL_MS, "jogStep")
+            } else {
+                resumePolling()
+            }
+            break
     }
+}
+
+// miot answers each item with its own code. Returns whether any item was refused.
+private Boolean rejected(Map reply) {
+    List refused = reply.result instanceof List ? reply.result.findAll { it instanceof Map && it.code != 0 } : []
+    refused.each { log.warn "${it.did} rejected: code ${it.code}" }
+    return !refused.isEmpty()
 }
 
 private void applyInfo(Map info) {
@@ -577,7 +710,7 @@ private void publish(Map s) {
     }
     if (s.containsKey("oscillation")) {
         sendEvent(name: "oscillation", value: s.oscillation ? "on" : "off")
-        getChildDevice(childDni())?.parse([[name: "switch", value: s.oscillation ? "on" : "off"]])
+        childSwitch("oscillation", s.oscillation as Boolean)
     }
     if (s.containsKey("angle")) {
         sendEvent(name: "oscillationAngle", value: s.angle)
@@ -602,22 +735,51 @@ private void applyDefaultName(String mac) {
         return
     }
     String name = "${DRIVER_NAME} ${digits.substring(digits.length() - 4)}"
-    def child = getChildDevice(childDni())
-    if (child?.name == "${DRIVER_NAME} Oscillation".toString()) {
-        child.setName("${name} Oscillation")
+    CHILDREN.each { String key, String suffix ->
+        def child = getChildDevice(childDni(key))
+        if (child?.name == "${DRIVER_NAME} ${suffix}".toString()) {
+            child.setName("${name} ${suffix}")
+        }
     }
     device.setName(name)
 }
 
-// ---- oscillation child ----
+// ---- child switches ----
 
-private String childDni() {
-    return "${device.deviceNetworkId}-oscillation".toString()
+private String childDni(String key) {
+    return "${device.deviceNetworkId}-${key}".toString()
 }
 
-private void ensureChild() {
-    if (!getChildDevice(childDni())) {
-        addChildDevice("hubitat", "Generic Component Switch", childDni(),
-            [name: "${device.displayName} Oscillation", isComponent: true])
+private String childKey(cd) {
+    return cd.deviceNetworkId.toString() - "${device.deviceNetworkId}-".toString()
+}
+
+private void ensureChildren() {
+    CHILDREN.each { String key, String suffix ->
+        Boolean wanted = key == "oscillation" || settings.moveSwitches
+        def child = getChildDevice(childDni(key))
+        if (wanted && !child) {
+            addChildDevice("hubitat", "Generic Component Switch", childDni(key),
+                [name: "${device.displayName} ${suffix}", isComponent: true])
+        } else if (!wanted && child) {
+            deleteChildDevice(childDni(key))
+        }
+        if (wanted && key != "oscillation") {
+            childSwitch(key, false)
+        }
     }
+}
+
+// force repeats the event although the value is unchanged, for a request that was refused.
+private void childSwitch(String key, Boolean on, Boolean force = false) {
+    def child = getChildDevice(childDni(key))
+    if (!child) {
+        return
+    }
+    String value = on ? "on" : "off"
+    Map event = [name: "switch", value: value, descriptionText: "${child.displayName} was turned ${value}"]
+    if (force) {
+        event.isStateChange = true
+    }
+    child.parse([event])
 }

@@ -38,6 +38,7 @@ Set these in the device preferences:
 | Buzzer, Indicator light, Child lock | `on` or `off`: the driver keeps the fan at that value. `unmanaged`: left alone |
 | Hub modes treated as night | Comma-separated hub mode names, `Night` by default |
 | Buzzer, light, lock at night | Value used while the hub is in a night mode. `same`: the day value |
+| Create left and right move switches | Adds the `Move Left` and `Move Right` child switches, off by default |
 
 ## What the device exposes
 
@@ -49,15 +50,22 @@ Set these in the device preferences:
 | `oscillation`, `setOscillation` | Also available as a child switch, for HomeKit |
 | `oscillationAngle`, `setOscillationAngle` | Setting an angle turns oscillation on |
 | `windMode`, `setWindMode` | `normal` or `natural` |
+| `move` | Turns the head one step `left` or `right`. Oscillation is turned off first |
+| `Move Left`, `Move Right` child switches | The head keeps turning, about one step every 0.75 s, while the switch is on |
 | `nightMode` | Whether the night values are in effect |
 | `connection` | `online`, `offline`, `unconfigured` or `unsupported model` |
 
-Oscillation, angle and wind mode commands are ignored while the fan is off.
+Oscillation, angle, wind mode and move commands are ignored while the fan is off.
+
+Turning a move switch off stops the head after at most the step that was already sent. A move
+switch that is left on turns itself off once the head has had enough steps to cross its whole
+range (about 18 to 22 s), and turning one on turns the other off.
 
 ## HomeKit
 
 Add the fan device to Hubitat's HomeKit Bridge as a *Fan* for power and speed, and its
-`Oscillation` child device as a *Switch*.
+`Oscillation` child device as a *Switch*. To aim the fan from HomeKit, enable the move switches
+and add them as *Switch* too.
 
 ## Device behaviour
 
