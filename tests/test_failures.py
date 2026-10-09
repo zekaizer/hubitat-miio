@@ -82,6 +82,16 @@ def stale_power_miot(rig):
     rig.cmd("setOscillation", S("on")); time.sleep(6)
     writes = rig.fan.requests(mark, "set_properties")
     check("oscillation is still refused while the fan is off", not writes and any("fan is off" in l for l in hub.logs(rig.dev, since)), f"{len(writes)} writes")
+    # A move switch turned off again while the driver is still reading the state.
+    rig.configure(moveSwitches=True); time.sleep(10)
+    left = hub.children(rig.dev)["Move Left"]
+    rig.cmd("off"); time.sleep(5)
+    mark = rig.fan.mark(); rig.fan.ctl(set={"2.1": True}, delay=2)
+    rig.cmd("on", dev=left); time.sleep(0.5)
+    rig.cmd("off", dev=left); time.sleep(7)
+    rig.fan.ctl()
+    steps = [r for r in rig.fan.requests(mark) if '"siid":6' in r]
+    check("a move switch turned off before the state is read starts no jog", not steps and hub.attributes(left).get("switch") == "off", f"{len(steps)} steps")
     rig.cmd("on"); time.sleep(4)
 
 def night_value(rig):
