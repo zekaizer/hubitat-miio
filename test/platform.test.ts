@@ -153,15 +153,49 @@ describe('platform', () => {
     await until(() => h.registered.length === 1, 'the accessory');
   });
 
+  it('adds a humidifier accessory for zhimi.humidifier.ca4', async () => {
+    const h = home();
+    const device = await h.device('zhimi.humidifier.ca4');
+    h.launch({ devices: [h.entry(device, { name: 'Humidifier', moveSwitches: true })] });
+    await until(() => h.registered.length === 1, 'the accessory');
+    const accessory = h.registered[0] as PlatformAccessory;
+    expect(accessory.displayName).toBe('Humidifier');
+    expect(accessory.category).toBe(Categories.AIR_HUMIDIFIER);
+    const service = accessory.getService(S.HumidifierDehumidifier);
+    await until(
+      () => service?.getCharacteristic(C.CurrentRelativeHumidity).value === 47,
+      'the first reading',
+    );
+    expect(accessory.getService(S.Fanv2)).toBeUndefined();
+    expect(accessory.getServiceById(S.Switch, 'move-left')).toBeUndefined();
+  });
+
+  it('uses a kept humidifier accessory again', async () => {
+    const first = home();
+    const device = await first.device('zhimi.humidifier.ca4');
+    first.launch({ devices: [first.entry(device)] });
+    await until(() => first.registered.length === 1, 'the accessory');
+    first.api.signalShutdown();
+    const accessory = first.registered[0] as PlatformAccessory;
+
+    const h = home();
+    device.humidifier['3/9'] = 61;
+    h.launch({ devices: [h.entry(device)] }, [accessory]);
+    const service = accessory.getService(S.HumidifierDehumidifier);
+    await until(
+      () => service?.getCharacteristic(C.CurrentRelativeHumidity).value === 61,
+      'a reading',
+    );
+    expect(h.registered).toEqual([]);
+  });
+
   it('does not add a device it has no support for', async () => {
     const h = home();
-    const device = await h.device('zhimi.humidifier.ca4' as FakeModel);
+    const device = await h.device('some.other.model' as FakeModel);
     h.launch({ devices: [h.entry(device)] });
     await until(
       () =>
-        h.lines.some((line) =>
-          /warn Bedroom fan: .*zhimi.humidifier.ca4.*not supported/.test(line),
-        ),
+        h.lines.some((line) => /warn Bedroom fan: .*some.other.model.*not supported/.test(line)),
       'the warning',
     );
     expect(h.registered).toEqual([]);

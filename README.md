@@ -13,9 +13,12 @@ last Hubitat driver is at commit `4de32b8`.
 |---|---|---|---|
 | `zhimi.fan.za1` | Pedestal fan | legacy miio | supported |
 | `dmaker.fan.p33` | Pedestal fan | miot | supported |
-| `zhimi.humidifier.ca4` | Evaporative humidifier | miot | planned |
+| `zhimi.humidifier.ca4` | Evaporative humidifier | miot | supported; **writes not verified on a real device** |
 
 The model is detected from the device. Both fans are exposed in the same way.
+
+For the humidifier only reads were measured on a real device. Its writes follow the published
+miot spec and have been run against a fake device only.
 
 ## Install
 
@@ -55,8 +58,8 @@ npm install homebridge-miio-local-<version>.tgz
 | `address` | IP address of the device. Give it a fixed address on the router: the accessory is tied to it |
 | `token` | The 32 hex character miio token of the device |
 | `pollInterval` | Seconds between state reads, 15 by default |
-| `moveSwitches` | Adds the *Move Left* and *Move Right* switches, off by default |
-| `buzzer`, `light` | `on` or `off`: the plugin keeps the device at that value. `unmanaged`, the default: left alone |
+| `moveSwitches` | Fans: adds the *Move Left* and *Move Right* switches, off by default |
+| `buzzer`, `light` | `on` or `off`: the plugin keeps the device at that value. `unmanaged`, the default: left alone. `light` is the indicator light of a fan and the screen of the humidifier |
 | `buzzerAtNight`, `lightAtNight` | The value during the night. `same`, the default: the day value. With an `unmanaged` day value, the device gets back what it had before the night |
 
 A device that does not answer when Homebridge starts is asked again every 30 seconds and added
@@ -85,10 +88,24 @@ what the fan has. A fan that stops answering is shown as *No Response*.
 Natural wind, the oscillation angle and the timer are not exposed. A fan in natural wind stays
 in it when the speed changes.
 
+One accessory for the humidifier:
+
+| Control | Notes |
+|---|---|
+| Power | |
+| Mode | *Auto* is the humidifier's automatic mode. *Humidify* is a manual level |
+| Speed | The manual level: up to 33 % low, up to 66 % medium, above that high |
+| Target humidity | Kept within 30-80 % |
+| Current humidity, water level | The water level scale is python-miio's and was not measured |
+| Child lock | |
+
+The temperature, the dry mode and the clean mode are not exposed. A `light` kept `on` sets the
+screen to its brightest level; a dim screen counts as on.
+
 ## Device behaviour
 
-[docs/local-api.md](docs/local-api.md) records how the two fans behave on the wire, as measured
-on real devices. The plugin relies on it.
+[docs/local-api.md](docs/local-api.md) records how the devices behave on the wire, as measured
+on real ones. The plugin relies on it. For the humidifier only reads were measured.
 
 ## Development
 
@@ -98,8 +115,9 @@ npm run typecheck
 npm run fmt
 ```
 
-`test/support/fake-device.ts` answers miio as either fan, following the measured behaviour, and
-can be told to stop answering, lose a reply or change state as if someone used the remote.
+`test/support/fake-device.ts` answers miio as any of the three models, following the measured
+behaviour, and can be told to stop answering, lose a reply or change state as if someone used
+the remote. How it takes writes as the humidifier is an assumption taken from the spec.
 
 ## License
 

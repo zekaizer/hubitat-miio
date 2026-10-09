@@ -1,11 +1,12 @@
 import { createCipheriv, createDecipheriv, createHash } from 'node:crypto';
 import { createSocket, type RemoteInfo, type Socket } from 'node:dgram';
 
-// A fake Xiaomi fan on localhost UDP. It follows docs/local-api.md and can be told to misbehave.
+// A fake Xiaomi device on localhost UDP. It follows docs/local-api.md and can be told to
+// misbehave.
 // The crypto is written out here, not imported from src/, so the tests do not check the client
 // against its own code.
 
-export type FakeModel = 'zhimi.fan.za1' | 'dmaker.fan.p33';
+export type FakeModel = 'zhimi.fan.za1' | 'dmaker.fan.p33' | 'zhimi.humidifier.ca4';
 
 export const FAKE_TOKEN = '00112233445566778899aabbccddeeff';
 export const FAKE_DEVICE_ID = 0x0badf00d;
@@ -75,8 +76,34 @@ export class FakeDevice {
     '6/2': 0,
     '7/1': false,
   };
-  /** miot properties, keyed "siid/piid", that answer -4003. */
+  /** miot properties, keyed "siid/piid", that answer as if the device did not have them. */
   readonly unreadable = new Set<string>();
+
+  /**
+   * zhimi.humidifier.ca4, keyed "siid/piid". Only reads were measured on the real one: how the
+   * fake takes writes follows the value ranges of the published spec and is an assumption.
+   */
+  readonly humidifier: Record<string, boolean | number> = {
+    '2/1': false,
+    '2/2': 0,
+    '2/5': 0,
+    '2/6': 70,
+    '2/7': 0,
+    '2/8': true,
+    '2/9': 30895473,
+    '2/10': 2,
+    '2/11': 704,
+    '3/7': 29.1,
+    '3/8': 84.3,
+    '3/9': 47,
+    '4/1': false,
+    '5/2': 2,
+    '6/1': false,
+    '7/1': 0,
+    '7/3': 30225623,
+    '7/4': 86,
+    '7/5': false,
+  };
 
   private readonly token = Buffer.from(FAKE_TOKEN, 'hex');
   private readonly key = md5(this.token);
@@ -205,7 +232,49 @@ export class FakeDevice {
         result: { model: this.model, fw_ver: '9.9.9', mac: 'AA:BB:CC:DD:FA:CE', token: FAKE_TOKEN },
       };
     }
+    if (this.model === 'zhimi.humidifier.ca4') {
+      return this.handleHumidifier(method, params);
+    }
     return this.isMiot ? this.handleMiot(method, params) : this.handleLegacy(method, params);
+  }
+
+  // biome-ignore lint/suspicious/noExplicitAny: requests are arbitrary JSON
+  private handleHumidifier(method: string, params: any): Reply {
+    if (method === 'set_properties' && Array.isArray(params) && params.length > 0) {
+      return {
+        result: params.map((item: { did: string; siid: number; piid: number; value: unknown }) => ({
+          did: item.did,
+          siid: item.siid,
+          piid: item.piid,
+          code: this.writeHumidifier(`${item.siid}/${item.piid}`, item.value),
+        })),
+      };
+    }
+    if (method !== 'get_properties') {
+      return method === 'action' ? err(-9999, 'user ack timeout') : err(-5001, 'command error');
+    }
+    // 15 items were read in one request and 25 were not; what lies between was not measured.
+    if (!Array.isArray(params) || params.length === 0 || params.length > 15) {
+      return err(-9999, 'user ack timeout');
+    }
+    let spoiled = false;
+    return {
+      result: params.map((item: { did: string; siid: number; piid: number }) => {
+        const key = `${item.siid}/${item.piid}`;
+        const base = { did: item.did, siid: item.siid, piid: item.piid };
+        // 2/3 and 2/4 answer -4001 and leave the rest of the request alone.
+        if (!spoiled && (key === '2/3' || key === '2/4')) {
+          return { ...base, code: -4001 };
+        }
+        // A property the device does not have answers -4004, and so do properties after it in
+        // the same request. The real device spares some of those; the fake spares none.
+        if (spoiled || !(key in this.humidifier) || this.unreadable.has(key)) {
+          spoiled = true;
+          return { ...base, code: -4004 };
+        }
+        return { ...base, code: 0, value: this.humidifier[key] };
+      }),
+    };
   }
 
   // biome-ignore lint/suspicious/noExplicitAny: requests are arbitrary JSON
@@ -340,6 +409,38 @@ export class FakeDevice {
         code: this.writeMiot(keyOf(item), item.value),
       })),
     };
+  }
+
+  // Not measured. Writable properties and their ranges are the spec's; the codes for a refused
+  // write are the ones dmaker.fan.p33 uses.
+  private writeHumidifier(key: string, value: unknown): number {
+    const ranges: Record<string, [number, number] | 'bool'> = {
+      '2/1': 'bool',
+      '2/5': [0, 3],
+      '2/6': [30, 80],
+      '2/8': 'bool',
+      '2/11': [200, 2000],
+      '4/1': 'bool',
+      '5/2': [0, 2],
+      '6/1': 'bool',
+      '7/5': 'bool',
+    };
+    const range = ranges[key];
+    if (!range) {
+      return key in this.humidifier ? -4003 : -4004;
+    }
+    const ok =
+      range === 'bool'
+        ? typeof value === 'boolean'
+        : typeof value === 'number' &&
+          Number.isInteger(value) &&
+          value >= range[0] &&
+          value <= range[1];
+    if (!ok) {
+      return -4005;
+    }
+    this.humidifier[key] = value as boolean | number;
+    return 0;
   }
 
   private writeMiot(key: string, value: unknown): number {

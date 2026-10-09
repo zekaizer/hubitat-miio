@@ -10,8 +10,10 @@ import { type Config, type DeviceConfig, endpoint, isNightAt, parseConfig } from
 import type { DeviceMemory } from './device';
 import { Fan } from './fan';
 import { type DeviceInfo, FanAccessory } from './fan-accessory';
+import { Humidifier } from './humidifier';
+import { HumidifierAccessory } from './humidifier-accessory';
 import { MiioClient, MiioTimeoutError } from './miio/client';
-import { fanModel } from './models';
+import { fanModel, humidifierModel } from './models';
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings';
 
 /** Timings, for tests. */
@@ -28,10 +30,13 @@ interface Context {
 
 const IDENTIFY_RETRY_MS = 30000;
 
+const supported = (model: string): boolean =>
+  fanModel(model) !== undefined || humidifierModel(model) !== undefined;
+
 export class MiioLocalPlatform implements DynamicPlatformPlugin {
   private readonly config: Config;
   private readonly cached = new Map<string, PlatformAccessory>();
-  private readonly fans: Fan[] = [];
+  private readonly devices: Array<{ stop(): void }> = [];
   private readonly clients: MiioClient[] = [];
   private readonly wake = new Set<() => void>();
   private stopped = false;
@@ -81,17 +86,17 @@ export class MiioLocalPlatform implements DynamicPlatformPlugin {
     // An accessory Homebridge has kept is shown at once, also when its device is not there.
     const kept = this.cached.get(uuid);
     const known = (kept?.context as Context | undefined)?.info;
-    const shown = kept !== undefined && known !== undefined && fanModel(known.model) !== undefined;
+    const shown = kept !== undefined && known !== undefined && supported(known.model);
     if (shown) {
       this.build(device, client, kept, known);
     }
 
-    // The fan that is shown already says so itself when its device does not answer.
+    // A device that is shown already says so itself when it does not answer.
     const info = await this.identify(device, client, shown);
     if (!info) {
       return;
     }
-    if (!fanModel(info.model)) {
+    if (!supported(info.model)) {
       this.log.warn(`${device.name}: the model ${info.model} is not supported`);
       return;
     }
@@ -99,8 +104,9 @@ export class MiioLocalPlatform implements DynamicPlatformPlugin {
       (kept.context as Context).info = info;
       return;
     }
-    const accessory =
-      kept ?? new this.api.platformAccessory(device.name, uuid, this.api.hap.Categories.FAN);
+    const { Categories } = this.api.hap;
+    const category = fanModel(info.model) ? Categories.FAN : Categories.AIR_HUMIDIFIER;
+    const accessory = kept ?? new this.api.platformAccessory(device.name, uuid, category);
     (accessory.context as Context).info = info;
     this.build(device, client, accessory, info);
     if (kept) {
@@ -152,13 +158,9 @@ export class MiioLocalPlatform implements DynamicPlatformPlugin {
     accessory: PlatformAccessory,
     info: DeviceInfo,
   ): void {
-    const model = fanModel(info.model);
-    if (!model) {
-      return;
-    }
     const context = accessory.context as Context;
     context.memory ??= {};
-    const fan = new Fan(client, model, {
+    const options = {
       pollMs: device.pollMs,
       buzzer: device.buzzer,
       light: device.light,
@@ -168,25 +170,36 @@ export class MiioLocalPlatform implements DynamicPlatformPlugin {
       memory: context.memory,
       onMemoryChange: () => this.api.updatePlatformAccessories([accessory]),
       log: {
-        info: (message) => this.log.info(`${device.name}: ${message}`),
-        warn: (message) => this.log.warn(`${device.name}: ${message}`),
-        debug: (message) => this.log.debug(`${device.name}: ${message}`),
+        info: (message: string) => this.log.info(`${device.name}: ${message}`),
+        warn: (message: string) => this.log.warn(`${device.name}: ${message}`),
+        debug: (message: string) => this.log.debug(`${device.name}: ${message}`),
       },
-    });
-    new FanAccessory(this.api.hap, accessory, fan, {
-      name: device.name,
-      moveSwitches: device.moveSwitches,
-      info,
-    });
-    this.fans.push(fan);
+    };
+    const fan = fanModel(info.model);
+    const humidifier = humidifierModel(info.model);
+    let started: Fan | Humidifier;
+    if (fan) {
+      started = new Fan(client, fan, options);
+      new FanAccessory(this.api.hap, accessory, started, {
+        name: device.name,
+        moveSwitches: device.moveSwitches,
+        info,
+      });
+    } else if (humidifier) {
+      started = new Humidifier(client, humidifier, options);
+      new HumidifierAccessory(this.api.hap, accessory, started, { name: device.name, info });
+    } else {
+      return;
+    }
+    this.devices.push(started);
     this.log.info(`${device.name}: ${info.model} at ${device.address}`);
-    fan.start();
+    started.start();
   }
 
   private shutdown(): void {
     this.stopped = true;
-    for (const fan of this.fans) {
-      fan.stop();
+    for (const device of this.devices) {
+      device.stop();
     }
     for (const client of this.clients) {
       client.close();

@@ -27,6 +27,36 @@ export interface FanState extends DeviceState {
 
 export type Direction = 'left' | 'right';
 
+export type HumidifierMode = 'auto' | 'low' | 'medium' | 'high';
+export type Brightness = 'off' | 'dim' | 'bright';
+
+export interface HumidifierState extends DeviceState {
+  mode: HumidifierMode;
+  /** Percent, 30-80. */
+  targetHumidity: number;
+  /** Percent. */
+  humidity: number;
+  /** Degrees Celsius. */
+  temperature: number;
+  /** As the device reports it, 0-128. What the scale means was not measured. */
+  waterLevel: number;
+  dry: boolean;
+  /** 0: no fault. */
+  fault: number;
+  lock: boolean;
+  /** Of the screen. light is whether it is anything but off. */
+  brightness: Brightness;
+}
+
+// The writes follow the published spec. They were not measured on a real humidifier.
+export interface HumidifierModel extends DeviceModel<HumidifierState> {
+  setPower(client: MiioClient, on: boolean): Promise<void>;
+  setMode(client: MiioClient, mode: HumidifierMode): Promise<void>;
+  /** Percent, 30-80. */
+  setTargetHumidity(client: MiioClient, percent: number): Promise<void>;
+  setLock(client: MiioClient, on: boolean): Promise<void>;
+}
+
 // What both fan models can do, with the differences between their dialects hidden.
 export interface FanModel extends DeviceModel<FanState> {
   /** Move steps that take the head across its whole range. */

@@ -1,16 +1,18 @@
-# Local API of two Xiaomi fans
+# Local API of three Xiaomi miio devices
 
-How two Xiaomi fans behave when they are controlled over the LAN with the miio protocol,
-without the Xiaomi cloud. It is written for people who write or debug a local integration.
+How two Xiaomi fans and a humidifier behave when they are controlled over the LAN with the miio
+protocol, without the Xiaomi cloud. It is written for people who write or debug a local
+integration.
 
-| Model | Dialect | Firmware measured |
-|---|---|---|
-| [`zhimi.fan.za1`](#zhimifanza1) | legacy miio | `2.2.8` |
-| [`dmaker.fan.p33`](#dmakerfanp33) | miot | `2.1.3` |
+| Model | Dialect | Firmware measured | Measured |
+|---|---|---|---|
+| [`zhimi.fan.za1`](#zhimifanza1) | legacy miio | `2.2.8` | reads and writes |
+| [`dmaker.fan.p33`](#dmakerfanp33) | miot | `2.1.3` | reads and writes |
+| [`zhimi.humidifier.ca4`](#zhimihumidifierca4) | miot | `2.2.8` | reads only |
 
-Everything here was measured on 2026-10-08, on one unit of each model. Other firmware versions
-may behave differently. Where a measurement contradicts the published miot spec, this document
-records the measurement.
+The fans were measured on 2026-10-08 and the humidifier on 2026-10-09, on one unit of each
+model. Other firmware versions may behave differently. Where a measurement contradicts the
+published miot spec, this document records the measurement.
 
 ## Method
 
@@ -362,7 +364,109 @@ are dropped silently here too.
 The `exe_time` field of the replies was 150-280 ms, so most of the round trip is spent in the
 device.
 
+## zhimi.humidifier.ca4
+
+| Field | Value |
+|---|---|
+| Model | `zhimi.humidifier.ca4` |
+| Firmware | `2.2.8`, MCU `0017`, miio `0.0.9` |
+| Hardware | `esp32` |
+| Spec | `urn:miot-spec-v2:device:humidifier:0000A00E:zhimi-ca4:2` |
+
+**Only reads were measured.** The humidifier was off the whole time, and nothing here says how
+it takes a write or an action.
+
+`miIO.info` answers and, as on the fans, contains the token in clear.
+
+### Properties
+
+Reading the properties of the spec, and a scan of siid 1-8 x piid 1-12, found 19 readable
+properties. The access column is the spec's; no write was tried.
+
+| siid/piid | Name | Type | Value read | Spec access | Notes |
+|---|---|---|---|---|---|
+| 2/1 | on | bool | `false` | rw | |
+| 2/2 | fault | uint8 | `0` | r | |
+| 2/5 | fan-level | uint8 | `0` | rw | spec: 0 auto, 1-3 levels |
+| 2/6 | target-humidity | uint8 | `70` | rw | spec: 30-80 % |
+| 2/7 | water-level | uint8 | `0` | r | spec: 0-128. Read with the humidifier off; the scale was not measured |
+| 2/8 | dry | bool | `true` | rw | |
+| 2/9 | use-time | int32 | `30895473` | r | unit not measured |
+| 2/10 | button-pressed | uint8 | `2` | r | spec: 0 none, 1 led, 2 power |
+| 2/11 | speed-level | int32 | `704` | rw | spec: 200-2000 |
+| 3/7 | temperature | float | `29.1`, later `29` | r | Celsius |
+| 3/8 | fahrenheit | float | `84.3` | r | |
+| 3/9 | relative-humidity | uint8 | `47` | r | |
+| 4/1 | alarm (buzzer) | bool | `false` | rw | |
+| 5/2 | brightness | uint8 | `2` | rw | spec: 0 dark, 1 glimmer, 2 brightest |
+| 6/1 | physical-controls-locked | bool | `false` | rw | |
+| 7/1 | actual-speed | uint32 | `0` | r | |
+| 7/3 | power-time | uint32 | `30225623` | r | spec: seconds |
+| 7/4 | country-code | uint32 | `86` | rw | |
+| 7/5 | clean | bool | `false` | rw | |
+
+The device-information service (siid 1) is not readable: every property of it answers `-4004`.
+
+### A property the device does not have
+
+**A property the device does not have answers `-4004`, and properties that come after it in the
+same request can answer `-4004` as well**, although each of them reads fine by itself.
+
+| `get_properties` request | Result |
+|---|---|
+| `2/1` | value |
+| `2/1`, `9/9` | `2/1` value; `9/9` `-4004` |
+| `9/9`, `2/1` | both `-4004` |
+| `2/1`, `9/9`, `3/9` | `2/1` value; `9/9` and `3/9` `-4004` |
+| `3/9`, `9/9` | `3/9` value; `9/9` `-4004` |
+| `1/1`, `2/1` | both `-4004` |
+| `2/3`, `2/1` | `2/3` `-4001`; `2/1` value |
+| `2/1`, `2/3`, `2/5` | `2/3` `-4001`; the other two values |
+| `1/11`, `1/12`, `2/1`, `2/2`, `2/3`, `2/4`, `2/5`, `2/6`, `2/7`, `2/8` | the first six `-4004`; `2/5` to `2/8` values |
+| the same ten, with `1/11`, `1/12`, `2/3`, `2/4` last | six values; the last four `-4004` |
+
+- Each request was sent twice, with the same result both times.
+- Not every later property is lost. After a missing one, `2/1`, `2/2`, `3/9`, `7/1` and `7/3`
+  answered `-4004`, while `2/5` to `2/8`, `4/1`, `5/2`, `7/4` and `7/5` were still given. What
+  decides it was not worked out.
+- `2/3` and `2/4`, which the spec does not list, answer `-4001` instead and leave the rest of
+  the request alone. After a `-4004` in the same request they answer `-4004` too.
+- A request made only of properties the device has was answered in full every time: the same
+  11 properties nine times.
+
+An integration should therefore ask only for properties the device has.
+
+### Replies and errors
+
+| Request | Result |
+|---|---|
+| Unknown method | `-5001 command error`, answered in 66 ms |
+| Legacy `get_prop` | `-5001 command error`, answered in 138 ms |
+| `get_properties` with an empty list | `-9999 user ack timeout` after 4 s |
+
+### Request size
+
+| `get_properties` request | Result |
+|---|---|
+| 1, 11, 15 items (up to 485 bytes of params) | all results |
+| 25, 32, 40 items | `-9999` after 4 s |
+
+The limit lies between 15 and 25 items; whether it counts items or bytes was not separated.
+
+### Latency
+
+| Request | Round trip |
+|---|---|
+| `get_properties`, 1 property | 104-143 ms |
+| `get_properties`, 11 properties | 97-128 ms |
+| `get_properties`, 15 properties | 102-133 ms |
+
 ## Differences that matter to an integration
+
+The table compares the two fans. `zhimi.humidifier.ca4`, measured for reads only, differs from
+both: an unknown method answers `-5001` at once, a missing property answers `-4004` and can
+take other properties of the request with it, and a read takes 15 items.
+
 
 | | `zhimi.fan.za1` | `dmaker.fan.p33` |
 |---|---|---|

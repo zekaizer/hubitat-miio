@@ -2,7 +2,7 @@
   "pluginAlias": "MiioLocal",
   "pluginType": "platform",
   "singular": true,
-  "headerDisplay": "Xiaomi miio devices over the LAN, without the Xiaomi cloud. Supported models: `zhimi.fan.za1`, `dmaker.fan.p33`. The model is detected from the device.",
+  "headerDisplay": "Xiaomi miio devices over the LAN, without the Xiaomi cloud. Supported models: the fans `zhimi.fan.za1` and `dmaker.fan.p33`, and the humidifier `zhimi.humidifier.ca4`. The model is detected from the device.",
   "schema": {
     "type": "object",
     "properties": {
@@ -67,7 +67,7 @@
               "title": "Move Left and Move Right switches",
               "type": "boolean",
               "default": false,
-              "description": "Two switches that turn the head of a fan step by step while they are on."
+              "description": "Two switches that turn the head of a fan step by step while they are on. Not used for a humidifier."
             },
             "buzzer": {
               "title": "Buzzer",
@@ -84,13 +84,13 @@
               "description": "same: the value above. With an unmanaged value above, the device gets back what it had before the night."
             },
             "light": {
-              "title": "Indicator light",
+              "title": "Indicator light or screen",
               "type": "string",
               "default": "unmanaged",
               "enum": ["unmanaged", "on", "off"]
             },
             "lightAtNight": {
-              "title": "Indicator light at night",
+              "title": "Indicator light or screen at night",
               "type": "string",
               "default": "same",
               "enum": ["same", "on", "off"]
