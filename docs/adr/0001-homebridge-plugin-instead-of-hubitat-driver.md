@@ -52,7 +52,7 @@ The Hubitat driver, its Hubitat Package Manager manifest and the hub-driven test
   could only be tested on a hub.
 - The devices are no longer available to Hubitat rules, dashboards or hub modes. Night values,
   which followed the hub mode, need another trigger.
-- None of the Groovy code is reused. The measured device behaviour and the fake device in
-  `tests/` carry over.
+- None of the Groovy code is reused. The measured device behaviour carries over, and so does
+  the fake device as a test double.
 - Hubitat installs of the package get no further updates. The last driver is 0.1.2, at commit
   `4de32b8`.

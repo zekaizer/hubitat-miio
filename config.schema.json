@@ -1,0 +1,103 @@
+{
+  "pluginAlias": "MiioLocal",
+  "pluginType": "platform",
+  "singular": true,
+  "headerDisplay": "Xiaomi miio devices over the LAN, without the Xiaomi cloud. Supported models: `zhimi.fan.za1`, `dmaker.fan.p33`. The model is detected from the device.",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "title": "Name",
+        "type": "string",
+        "default": "Miio Local",
+        "description": "Shown in the Homebridge log."
+      },
+      "night": {
+        "title": "Night",
+        "type": "object",
+        "description": "When the night values of the devices below are used. Leave empty to never use them.",
+        "properties": {
+          "start": {
+            "title": "Start",
+            "type": "string",
+            "placeholder": "22:00",
+            "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+            "description": "Local time of the Homebridge host, HH:MM."
+          },
+          "end": {
+            "title": "End",
+            "type": "string",
+            "placeholder": "07:00",
+            "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+          }
+        }
+      },
+      "devices": {
+        "title": "Devices",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["name", "address", "token"],
+          "properties": {
+            "name": {
+              "title": "Name",
+              "type": "string",
+              "description": "The name the accessory is added with."
+            },
+            "address": {
+              "title": "IP address",
+              "type": "string",
+              "placeholder": "192.168.1.50",
+              "description": "Give the device a fixed address on the router. The accessory is tied to this address."
+            },
+            "token": {
+              "title": "Token",
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{32}$",
+              "description": "The 32 hex character miio token of the device."
+            },
+            "pollInterval": {
+              "title": "Poll interval (seconds)",
+              "type": "integer",
+              "minimum": 1,
+              "placeholder": 15,
+              "description": "How often the state is read, to pick up what was changed at the device or in the Mi Home app."
+            },
+            "moveSwitches": {
+              "title": "Move Left and Move Right switches",
+              "type": "boolean",
+              "default": false,
+              "description": "Two switches that turn the head of a fan step by step while they are on."
+            },
+            "buzzer": {
+              "title": "Buzzer",
+              "type": "string",
+              "default": "unmanaged",
+              "enum": ["unmanaged", "on", "off"],
+              "description": "on or off: the plugin keeps the device at that value. unmanaged: left alone."
+            },
+            "buzzerAtNight": {
+              "title": "Buzzer at night",
+              "type": "string",
+              "default": "same",
+              "enum": ["same", "on", "off"],
+              "description": "same: the value above. With an unmanaged value above, the device gets back what it had before the night."
+            },
+            "light": {
+              "title": "Indicator light",
+              "type": "string",
+              "default": "unmanaged",
+              "enum": ["unmanaged", "on", "off"]
+            },
+            "lightAtNight": {
+              "title": "Indicator light at night",
+              "type": "string",
+              "default": "same",
+              "enum": ["same", "on", "off"]
+            }
+          }
+        }
+      }
+    }
+  }
+}
