@@ -1,4 +1,4 @@
-"""Fake Xiaomi fan for the driver tests.
+"""Fake Xiaomi fan for tests.
 
 Answers miio on UDP 54321 as zhimi.fan.za1 or dmaker.fan.p33, following docs/local-api.md, and
 logs every request. A control file, read again on every packet, makes it misbehave:

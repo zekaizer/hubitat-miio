@@ -1,38 +1,30 @@
-# Tests
+# Fake fan
 
-The driver only runs inside a Hubitat hub, so the tests drive a real hub. The fan is a fake one:
-`fakefan.py` answers miio on this machine as `zhimi.fan.za1` or `dmaker.fan.p33`, following
-[docs/local-api.md](../docs/local-api.md), and can be told to stop answering, lose a reply or
-change state as if someone used the remote. No real fan is involved.
+`fakefan.py` answers miio on UDP port 54321 as `zhimi.fan.za1` or `dmaker.fan.p33`, following
+[docs/local-api.md](../docs/local-api.md). It can be told to stop answering, lose a reply or
+change state as if someone used the remote, so the failure paths can be exercised without a real
+fan.
 
 ## Requirements
 
-- A Hubitat hub on the same network, with hub security off, that can reach this machine on UDP
-  port 54321.
-- Python 3 with `pycryptodome`.
+Python 3 with `pycryptodome`.
 
 ## Run
 
 ```
-export HUBITAT_HUB=http://<hub address>
-python tests/test_commands.py      # every command on both models, about 6 minutes
-python tests/test_failures.py      # failure paths, about 6 minutes
+python tests/fakefan.py <model> <control.json> <log file>
 ```
 
-Both accept names to run a part: `test_commands.py dmaker.fan.p33`,
-`test_failures.py unreachable stray_handshake`. The exit code is 1 when a check fails.
+The token it expects is in `fakefan_token.py`. Every request is appended to the log file.
 
-**Each run first uploads `drivers/mi-fan.groovy` to the hub**, so every device that uses the
-driver runs the working copy from then on. `python tests/hub.py save` does only that.
+The control file is read again on every packet:
 
-A run creates a temporary `Mi Fan` device on the hub and deletes it at the end.
-
-## Files
-
-| File | Purpose |
+| Key | Effect |
 |---|---|
-| `fakefan.py` | The fake fan and the ways it can misbehave |
-| `harness.py` | Starts the fake fan and a temporary hub device that uses it |
-| `hub.py` | Hub helpers: commands, attributes, logs, driver upload |
-| `test_commands.py` | Commands, child switches, jog |
-| `test_failures.py` | Unreachable fan, lost replies, stale state, night values |
+| `silent` | Ignore every packet, like a fan that is unplugged |
+| `drop_requests` | Answer the handshake only, like a fan given the wrong token |
+| `drop_replies` | Number of requests to carry out without answering |
+| `stray_hello` | Number of requests to answer with a second handshake reply instead |
+| `delay` | Seconds to wait before each reply |
+| `set` | Properties to change, as if someone used the remote |
+| `unreadable` | miot properties, as `[siid, piid]`, that answer `-4003` |
