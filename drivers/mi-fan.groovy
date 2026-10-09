@@ -139,6 +139,11 @@ def configureDevice(String json) {
 // ---- commands ----
 
 def refresh() {
+    // Scheduled first: a failure below must not end the polling.
+    Integer every = (settings.pollSeconds ?: 30) as Integer
+    if (every > 0) {
+        runIn(every, "refresh")
+    }
     // Until the model is known nothing else can be sent in the right dialect.
     if (profile()) {
         // A read between two steps of a jog would make the steps uneven.
@@ -147,10 +152,6 @@ def refresh() {
         }
     } else if (!queued("info")) {
         enqueue("miIO.info", [], "info")
-    }
-    Integer every = (settings.pollSeconds ?: 30) as Integer
-    if (every > 0) {
-        runIn(every, "refresh")
     }
 }
 
@@ -480,8 +481,8 @@ private void pump() {
     }
     if (now() - ((state.handshakeAt ?: 0) as Long) > HANDSHAKE_TTL_MS) {
         state.awaitingHello = true
-        sendHex(HELLO)
         runIn(REPLY_TIMEOUT_S, "onTimeout")
+        sendHex(HELLO)
         return
     }
     List queue = state.queue
@@ -492,8 +493,9 @@ private void pump() {
     state.msgId = id
     item.id = id
     state.inflight = item
-    sendHex(buildPacket(JsonOutput.toJson([id: id, method: item.method, params: item.params])))
+    // Armed before the send: without it a request that fails to go out stays in flight for good.
     runIn(REPLY_TIMEOUT_S, "onTimeout")
+    sendHex(buildPacket(JsonOutput.toJson([id: id, method: item.method, params: item.params])))
 }
 
 // A dropped packet, a wrong token and an absent fan all look the same: no reply.
@@ -578,6 +580,11 @@ def parse(String description) {
         return
     }
     if (hex.length() == 64) {
+        // A handshake reply nobody waits for is late or repeated. Acting on it would cancel the
+        // timeout of the request in flight.
+        if (!state.awaitingHello) {
+            return
+        }
         // Handshake reply: 32-byte header carrying the device id and its clock.
         state.handshakeAnswered = true
         state.deviceId = hex.substring(16, 24)
