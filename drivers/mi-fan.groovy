@@ -499,6 +499,9 @@ private void pump() {
 // A dropped packet, a wrong token and an absent fan all look the same: no reply.
 def onTimeout() {
     Map item = state.inflight
+    if (state.awaitingHello) {
+        state.handshakeAnswered = false
+    }
     state.inflight = null
     state.awaitingHello = false
     state.remove("handshakeAt")
@@ -510,7 +513,13 @@ def onTimeout() {
     List queue = state.queue ?: []
     Integer failures = ((state.failures ?: 0) as Integer) + 1
     if (failures > MAX_RETRIES) {
-        log.warn "no reply from ${settings.ip}; dropping ${queue.size() + (item ? 1 : 0)} request(s)"
+        // Reported when the fan stops answering, not again on every poll while it stays silent.
+        if (device.currentValue("connection") != "offline") {
+            // A fan drops a packet made with the wrong token without a word.
+            log.warn state.handshakeAnswered ?
+                "${settings.ip} answers the handshake but not requests: check the device token" :
+                "no reply from ${settings.ip}"
+        }
         endJog()
         state.queue = []
         state.failures = 0
@@ -566,6 +575,7 @@ def parse(String description) {
     }
     if (hex.length() == 64) {
         // Handshake reply: 32-byte header carrying the device id and its clock.
+        state.handshakeAnswered = true
         state.deviceId = hex.substring(16, 24)
         state.deviceStamp = Long.parseLong(hex.substring(24, 32), 16)
         state.handshakeAt = now()
@@ -689,6 +699,9 @@ private void applyState(Map s) {
         return
     }
     Boolean night = isNight()
+    if (device.currentValue("connection") == "offline") {
+        log.info "${settings.ip} answers again"
+    }
     sendEvent(name: "connection", value: "online")
     sendEvent(name: "nightMode", value: night ? "on" : "off")
     publish(s)
