@@ -524,6 +524,10 @@ def onTimeout() {
         state.queue = []
         state.failures = 0
         sendEvent(name: "connection", value: "offline")
+        // The dropped writes were reported as done when they were asked for.
+        if (state.confirmed) {
+            publish(state.confirmed as Map)
+        }
         return
     }
     state.failures = failures
@@ -704,6 +708,7 @@ private void applyState(Map s) {
     }
     sendEvent(name: "connection", value: "online")
     sendEvent(name: "nightMode", value: night ? "on" : "off")
+    state.confirmed = s
     publish(s)
     enforce(s, night)
 }
