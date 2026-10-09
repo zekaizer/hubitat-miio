@@ -8,4 +8,4 @@ export function fanModel(model: string): FanModel | undefined {
   return FANS.find((fan) => fan.model === model);
 }
 
-export type { Direction, FanModel, FanState } from './types';
+export type { DeviceModel, DeviceState, Direction, FanModel, FanState } from './types';

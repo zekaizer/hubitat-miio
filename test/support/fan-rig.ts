@@ -1,9 +1,10 @@
-import { Fan, type FanLog, type FanOptions, type FanSnapshot } from '../../src/fan';
+import type { DeviceLog } from '../../src/device';
+import { Fan, type FanOptions, type FanSnapshot } from '../../src/fan';
 import { MiioClient } from '../../src/miio/client';
 import { type FanModel, fanModel } from '../../src/models';
 import { FAKE_TOKEN, FakeDevice, type FakeModel } from './fake-device';
 
-export class Log implements FanLog {
+export class Log implements DeviceLog {
   readonly lines: string[] = [];
   info = (message: string): void => void this.lines.push(`info ${message}`);
   warn = (message: string): void => void this.lines.push(`warn ${message}`);

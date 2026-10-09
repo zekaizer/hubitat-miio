@@ -1,7 +1,7 @@
-import { type CallOptions, type MiioClient, MiioError } from '../miio/client';
+import { readProps, writeProps } from './miot';
 import type { FanModel, FanState } from './types';
 
-// siid, piid. level is 2/6: the spec calls it a read-only status, the fan takes 1-100 there.
+// level is 2/6: the spec calls it a read-only status, the fan takes 1-100 there.
 const PROPS = {
   power: [2, 1],
   level: [2, 6],
@@ -13,39 +13,7 @@ const PROPS = {
   lock: [7, 1],
 } as const;
 
-type Prop = keyof typeof PROPS;
-
-const READ: Prop[] = ['power', 'level', 'oscillation', 'mode', 'light', 'buzzer', 'lock'];
-
-interface Item {
-  did: string;
-  code: number;
-  value?: unknown;
-}
-
-const address = (name: Prop): { did: string; siid: number; piid: number } => ({
-  did: name,
-  siid: PROPS[name][0],
-  piid: PROPS[name][1],
-});
-
-// Values must have their JSON type: the fan takes any string for a boolean as false. The fan
-// applies the items in the order given.
-async function write(
-  client: MiioClient,
-  values: Array<[Prop, boolean | number]>,
-  options?: CallOptions,
-): Promise<void> {
-  const items = await client.call<Item[]>(
-    'set_properties',
-    values.map(([name, value]) => ({ ...address(name), value })),
-    options,
-  );
-  const refused = items.find((item) => item.code !== 0);
-  if (refused) {
-    throw new MiioError(refused.code, `${refused.did} rejected`);
-  }
-}
+const READ = ['power', 'level', 'oscillation', 'mode', 'light', 'buzzer', 'lock'] as const;
 
 // miot dialect: get_properties and set_properties, each item answered with its own code.
 export const dmakerFanP33: FanModel = {
@@ -54,14 +22,7 @@ export const dmakerFanP33: FanModel = {
   moveSteps: 28,
 
   async read(client): Promise<FanState> {
-    const items = await client.call<Item[]>('get_properties', READ.map(address));
-    const p = Object.fromEntries(
-      items.filter((item) => item.code === 0).map((item) => [item.did, item.value]),
-    );
-    const missing = READ.filter((name) => p[name] === undefined);
-    if (missing.length > 0) {
-      throw new Error(`the fan did not give ${missing.join(', ')}`);
-    }
+    const p = await readProps(client, PROPS, READ);
     return {
       power: p.power === true,
       level: Number(p.level),
@@ -73,22 +34,22 @@ export const dmakerFanP33: FanModel = {
     };
   },
 
-  setPower: (client, on) => write(client, [['power', on]]),
+  setPower: (client, on) => writeProps(client, PROPS, [['power', on]]),
 
   // The power always goes with the level: a level alone is stored without turning the fan on.
   // Power first: the fan ignores a level written before the power in the same request.
   setLevel: (client, level) =>
-    write(client, [
+    writeProps(client, PROPS, [
       ['power', true],
       ['level', level],
     ]),
 
-  setOscillation: (client, on) => write(client, [['oscillation', on]]),
-  setLock: (client, on) => write(client, [['lock', on]]),
-  setBuzzer: (client, on) => write(client, [['buzzer', on]]),
-  setLight: (client, on) => write(client, [['light', on]]),
+  setOscillation: (client, on) => writeProps(client, PROPS, [['oscillation', on]]),
+  setLock: (client, on) => writeProps(client, PROPS, [['lock', on]]),
+  setBuzzer: (client, on) => writeProps(client, PROPS, [['buzzer', on]]),
+  setLight: (client, on) => writeProps(client, PROPS, [['light', on]]),
 
   // Answers code 0 at the end of the range too.
   move: (client, direction) =>
-    write(client, [['move', direction === 'left' ? 1 : 2]], { retry: false }),
+    writeProps(client, PROPS, [['move', direction === 'left' ? 1 : 2]], { retry: false }),
 };

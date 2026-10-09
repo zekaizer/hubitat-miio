@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { FanMemory } from '../src/fan';
+import type { DeviceMemory } from '../src/device';
 import { MiioError } from '../src/miio/client';
 import { MODELS, Rig } from './support/fan-rig';
 
@@ -111,7 +111,7 @@ describe.each(MODELS)('fan kept settings: %s', (name) => {
     });
 
     it('remembers what to give back across a restart', async () => {
-      const memory: FanMemory = {};
+      const memory: DeviceMemory = {};
       let saved = 0;
       const options = { lightAtNight: 'off' as const, memory, onMemoryChange: () => saved++ };
       rig = await Rig.create(name, { ...options, isNight: () => true });

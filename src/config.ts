@@ -1,4 +1,4 @@
-import type { AtNight, Kept } from './fan';
+import type { AtNight, Kept } from './device';
 
 /** Local time, "HH:MM". The night runs from start to end, across midnight when end is earlier. */
 export interface NightSchedule {

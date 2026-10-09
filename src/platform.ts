@@ -7,7 +7,8 @@ import type {
 } from 'homebridge';
 
 import { type Config, type DeviceConfig, endpoint, isNightAt, parseConfig } from './config';
-import { Fan, type FanMemory } from './fan';
+import type { DeviceMemory } from './device';
+import { Fan } from './fan';
 import { type DeviceInfo, FanAccessory } from './fan-accessory';
 import { MiioClient, MiioTimeoutError } from './miio/client';
 import { fanModel } from './models';
@@ -22,7 +23,7 @@ export interface Tuning {
 /** Kept by Homebridge with the accessory. */
 interface Context {
   info?: DeviceInfo;
-  memory?: FanMemory;
+  memory?: DeviceMemory;
 }
 
 const IDENTIFY_RETRY_MS = 30000;
