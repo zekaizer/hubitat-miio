@@ -1,7 +1,7 @@
-# Mi Fan for Hubitat
+# Mi Home (miio) for Hubitat
 
-A Hubitat driver that controls Xiaomi fans over the LAN with the miio protocol. It does not use
-the Xiaomi cloud.
+Hubitat drivers that control Xiaomi devices over the LAN with the miio protocol. They do not use
+the Xiaomi cloud. The package has one driver so far, `Mi Fan`.
 
 ## Supported models
 
@@ -17,7 +17,7 @@ The model is detected automatically. Both models are exposed in the same way.
 With Hubitat Package Manager: *Install* > *From a URL*, then enter
 
 ```
-https://raw.githubusercontent.com/zekaizer/hubitat-mifan/main/packageManifest.json
+https://raw.githubusercontent.com/zekaizer/hubitat-miio/main/packageManifest.json
 ```
 
 Manually: paste `drivers/mi-fan.groovy` into *Drivers Code*, then add a virtual device that uses

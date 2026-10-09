@@ -60,7 +60,7 @@ import javax.crypto.spec.SecretKeySpec
 
 metadata {
     definition(name: "Mi Fan", namespace: "zekaizer", author: "Luke Lee", singleThreaded: true,
-               importUrl: "https://raw.githubusercontent.com/zekaizer/hubitat-mifan/main/drivers/mi-fan.groovy") {
+               importUrl: "https://raw.githubusercontent.com/zekaizer/hubitat-miio/main/drivers/mi-fan.groovy") {
         capability "Actuator"
         capability "Switch"
         capability "SwitchLevel"
