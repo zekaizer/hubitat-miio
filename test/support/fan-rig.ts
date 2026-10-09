@@ -52,7 +52,7 @@ export class Rig {
     });
     this.fan = new Fan(this.client, this.model, {
       pollMs: 60_000,
-      jogIntervalMs: 10,
+      jogPeriodMs: 10,
       enforceIntervalMs: 0,
       log: this.log,
       ...options,

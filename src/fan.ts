@@ -26,7 +26,8 @@ export interface FanOptions {
   isNight?: () => boolean;
   memory?: FanMemory;
   onMemoryChange?: () => void;
-  jogIntervalMs?: number;
+  /** Time from one head step to the next. */
+  jogPeriodMs?: number;
   enforceIntervalMs?: number;
   log?: FanLog;
 }
@@ -42,9 +43,9 @@ export interface FanSnapshot {
 
 const POLL_MS = 15000;
 const ENFORCE_INTERVAL_MS = 10000;
-// A jog sends the next step this long after the reply to the one before. Not shorter:
-// dmaker.fan.p33 answers a step sent 200 ms after the last reply with code 0 and skips it.
-const JOG_INTERVAL_MS = 400;
+// Time from one head step to the next. Not shorter: dmaker.fan.p33 answers steps sent 0.55 s
+// apart with code 0 and skips some of them; 0.75 s apart it took every one.
+const JOG_PERIOD_MS = 750;
 const KEPT = ['buzzer', 'light'] as const;
 type KeptKey = (typeof KEPT)[number];
 const SILENT: FanLog = { info: () => undefined, warn: () => undefined, debug: () => undefined };
@@ -57,7 +58,7 @@ const describe = (error: unknown): string =>
 export class Fan {
   private readonly pollMs: number;
   private readonly enforceIntervalMs: number;
-  private readonly jogIntervalMs: number;
+  private readonly jogPeriodMs: number;
   private readonly log: FanLog;
   private readonly day: Record<KeptKey, Kept>;
   private readonly atNight: Record<KeptKey, AtNight>;
@@ -97,7 +98,7 @@ export class Fan {
   ) {
     this.pollMs = options.pollMs ?? POLL_MS;
     this.enforceIntervalMs = options.enforceIntervalMs ?? ENFORCE_INTERVAL_MS;
-    this.jogIntervalMs = options.jogIntervalMs ?? JOG_INTERVAL_MS;
+    this.jogPeriodMs = options.jogPeriodMs ?? JOG_PERIOD_MS;
     this.log = options.log ?? SILENT;
     this.day = { buzzer: options.buzzer ?? 'unmanaged', light: options.light ?? 'unmanaged' };
     this.atNight = {
@@ -271,7 +272,8 @@ export class Fan {
     this.refresh();
   }
 
-  // The next step is never queued ahead: it is sent jogIntervalMs after the reply to this one.
+  // The next step is never queued ahead: it is sent after the reply to this one, and no sooner
+  // than jogPeriodMs after this one was sent.
   private async jogStep(id: number, direction: Direction): Promise<void> {
     if (id !== this.jogId) {
       return;
@@ -284,6 +286,7 @@ export class Fan {
       return;
     }
     this.jogSteps += 1;
+    const sentAt = Date.now();
     try {
       await this.model.move(this.client, direction);
     } catch (error) {
@@ -304,10 +307,13 @@ export class Fan {
     if (id !== this.jogId) {
       return;
     }
-    this.jogTimer = setTimeout(() => {
-      this.jogTimer = undefined;
-      this.run(() => this.jogStep(id, direction));
-    }, this.jogIntervalMs);
+    this.jogTimer = setTimeout(
+      () => {
+        this.jogTimer = undefined;
+        this.run(() => this.jogStep(id, direction));
+      },
+      Math.max(0, this.jogPeriodMs - (Date.now() - sentAt)),
+    );
   }
 
   private endJog(): void {

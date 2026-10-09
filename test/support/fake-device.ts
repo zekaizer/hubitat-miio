@@ -40,6 +40,8 @@ export class FakeDevice {
 
   readonly requests: Array<{ method: string; params: unknown }> = [];
   readonly moves: string[] = [];
+  /** When each move arrived. */
+  readonly moveTimes: number[] = [];
   hellos = 0;
   /** Highest number of requests that were being served at the same time. */
   maxInFlight = 0;
@@ -299,6 +301,7 @@ export class FakeDevice {
           return err(-6007, 'device_busy');
         }
         this.moves.push(value);
+        this.moveTimes.push(Date.now());
         return OK;
     }
   }
@@ -396,6 +399,7 @@ export class FakeDevice {
         // The end of the range is not reported: every step answers code 0.
         if (value === 1 || value === 2) {
           this.moves.push(value === 1 ? 'left' : 'right');
+          this.moveTimes.push(Date.now());
           return 0;
         }
         return -4005;

@@ -4,7 +4,7 @@ import { MODELS, Rig } from './support/fan-rig';
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-// The rig sends a step 10 ms after the reply to the one before.
+// The rig sends the steps 10 ms apart.
 describe.each(MODELS)('fan jog: %s', (name) => {
   let rig: Rig;
 
@@ -36,6 +36,31 @@ describe.each(MODELS)('fan jog: %s', (name) => {
     // At most the step that was already on its way.
     expect(rig.device.moves.length).toBeLessThanOrEqual(sent + 1);
     expect(new Set(rig.device.moves)).toEqual(new Set(['left']));
+  });
+
+  // dmaker.fan.p33 skips a step that comes too soon after the one before, so the pace must not
+  // depend on how fast the fan answers.
+  it('sends the steps a fixed time apart, however long the fan takes to answer', async () => {
+    rig = await (await Rig.create(name, { jogPeriodMs: 60 }, { moveSteps: 4 })).started();
+    rig.device.delayMs = 35;
+    rig.fan.startJog('left');
+    await rig.fan.idle();
+    const times = rig.device.moveTimes;
+    const gaps = times.slice(1).map((time, i) => time - (times[i] as number));
+    expect(gaps).toHaveLength(3);
+    for (const gap of gaps) {
+      expect(gap).toBeGreaterThanOrEqual(55);
+      expect(gap).toBeLessThan(85);
+    }
+  });
+
+  it('waits for the reply when the fan takes longer than that to answer', async () => {
+    rig = await (await Rig.create(name, { jogPeriodMs: 10 }, { moveSteps: 3 })).started();
+    rig.device.delayMs = 30;
+    rig.fan.startJog('left');
+    await rig.fan.idle();
+    expect(rig.device.moves).toHaveLength(3);
+    expect(rig.device.maxInFlight).toBe(1);
   });
 
   it('stops by itself once the head has crossed its range', async () => {

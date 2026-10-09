@@ -72,7 +72,7 @@ One accessory per fan:
 | Speed | 1-100 %. Setting a speed turns the fan on |
 | Oscillation | Ignored while the fan is off |
 | Child lock | |
-| *Move Left*, *Move Right* switches | The head keeps turning, about one step every 0.75 s, while the switch is on |
+| *Move Left*, *Move Right* switches | The head keeps turning, one step every 0.75 s, while the switch is on |
 
 Turning a move switch off stops the head after at most the step that was already sent. A move
 switch that is left on turns itself off once the head has had enough steps to cross its whole
