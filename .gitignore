@@ -1,3 +1,8 @@
+node_modules/
+dist/
+coverage/
+*.tgz
+*.log
+.DS_Store
 .local/
 CLAUDE.local.md
-__pycache__/

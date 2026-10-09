@@ -1,80 +1,119 @@
-# Mi Home (miio) for Hubitat
+# homebridge-miio-local
 
-Hubitat drivers that control Xiaomi devices over the LAN with the miio protocol. They do not use
-the Xiaomi cloud. The package has one driver so far, `Mi Fan`.
+Homebridge plugin that exposes Xiaomi devices to Apple Home over the LAN with the miio protocol.
+It does not use the Xiaomi cloud.
 
-## Supported models
+## Supported devices
 
-| Model | Dialect |
-|---|---|
-| `zhimi.fan.za1` | legacy miio |
-| `dmaker.fan.p33` | miot |
+| Model | Device | Dialect | Status |
+|---|---|---|---|
+| `zhimi.fan.za1` | Pedestal fan | legacy miio | supported |
+| `dmaker.fan.p33` | Pedestal fan | miot | supported |
+| `zhimi.humidifier.ca4` | Evaporative humidifier | miot | supported; **writes not verified on a real device** |
 
-The model is detected automatically. Both models are exposed in the same way.
+The model is detected from the device. Both fans are exposed in the same way.
+
+For the humidifier only reads were measured on a real device. Its writes follow the published
+miot spec and have been run against a fake device only.
 
 ## Install
 
-With Hubitat Package Manager: *Install* > *From a URL*, then enter
+The package is not on npm yet. Build a tarball and install it where Homebridge keeps its
+plugins:
 
 ```
-https://raw.githubusercontent.com/zekaizer/hubitat-miio/main/packageManifest.json
+npm install
+npm run build
+npm pack
+npm install homebridge-miio-local-<version>.tgz
 ```
-
-Manually: paste `drivers/mi-fan.groovy` into *Drivers Code*, then add a virtual device that uses
-the `Mi Fan` driver.
-
-Once the fan answers, a device still named `Mi Fan` is renamed `Mi Fan XXXX`, where `XXXX` is the
-last four digits of the fan's MAC address. A device that was given another name keeps it.
 
 ## Configure
 
-Set these in the device preferences:
+```json
+{
+  "platform": "MiioLocal",
+  "night": { "start": "22:00", "end": "07:00" },
+  "devices": [
+    {
+      "name": "Bedroom fan",
+      "address": "192.168.1.50",
+      "token": "<32 hex characters>",
+      "moveSwitches": true,
+      "buzzer": "off",
+      "lightAtNight": "off"
+    }
+  ]
+}
+```
 
-| Preference | Meaning |
+| Setting | Meaning |
 |---|---|
-| Fan IP address | Give the fan a fixed address on the router |
-| Device token | The 32 hex character miio token of the fan |
-| Poll interval | Seconds between state reads, 30 by default |
-| Buzzer, Indicator light, Child lock | `on` or `off`: the driver keeps the fan at that value. `unmanaged`: left alone |
-| Hub modes treated as night | Comma-separated hub mode names, `Night` by default |
-| Buzzer, light, lock at night | Value used while the hub is in a night mode. `same`: the day value. With an `unmanaged` day value, the fan gets back what it had before the night |
-| Create left and right move switches | Adds the `Move Left` and `Move Right` child switches, off by default |
+| `night.start`, `night.end` | When the night values are used, as local time `HH:MM` of the Homebridge host. Without it they never are |
+| `name` | The name the accessory is added with |
+| `address` | IP address of the device. Give it a fixed address on the router: the accessory is tied to it |
+| `token` | The 32 hex character miio token of the device |
+| `pollInterval` | Seconds between state reads, 15 by default |
+| `moveSwitches` | Fans: adds the *Move Left* and *Move Right* switches, off by default |
+| `buzzer`, `light` | `on` or `off`: the plugin keeps the device at that value. `unmanaged`, the default: left alone. `light` is the indicator light of a fan and the screen of the humidifier |
+| `buzzerAtNight`, `lightAtNight` | The value during the night. `same`, the default: the day value. With an `unmanaged` day value, the device gets back what it had before the night |
 
-## What the device exposes
+A device that does not answer when Homebridge starts is asked again every 30 seconds and added
+once it answers.
 
-| Capability or attribute | Notes |
+## What Apple Home shows
+
+One accessory per fan:
+
+| Control | Notes |
 |---|---|
-| `Switch` | |
-| `SwitchLevel` | Fan speed, 1-100 %. Setting a level turns the fan on |
-| `FanControl` | `low`, `medium-low`, `medium`, `high` are 25, 50, 75 and 100 % |
-| `oscillation`, `setOscillation` | Also available as a child switch, for HomeKit |
-| `oscillationAngle`, `setOscillationAngle` | Setting an angle turns oscillation on |
-| `windMode`, `setWindMode` | `normal` or `natural` |
-| `move` | Turns the head one step `left` or `right`. Oscillation is turned off first |
-| `Move Left`, `Move Right` child switches | The head keeps turning, about one step every 0.75 s, while the switch is on |
-| `nightMode` | Whether the night values are in effect |
-| `connection` | `online`, `offline`, `unconfigured` or `unsupported model` |
-
-Oscillation, angle, wind mode and move commands are ignored while the fan is off.
+| Power | |
+| Speed | 1-100 %. Setting a speed turns the fan on |
+| Oscillation | Ignored while the fan is off |
+| Child lock | |
+| *Move Left*, *Move Right* switches | The head keeps turning, one step every 0.75 s, while the switch is on |
 
 Turning a move switch off stops the head after at most the step that was already sent. A move
 switch that is left on turns itself off once the head has had enough steps to cross its whole
-range (about 18 to 22 s), and turning one on turns the other off.
+range (about 18 to 22 s), and turning one on turns the other off. A move turns oscillation off
+first.
 
-## HomeKit
+A control shows its new value at once. If the fan does not take it, the control goes back to
+what the fan has. A fan that stops answering is shown as *No Response*.
 
-Add the fan device to Hubitat's HomeKit Bridge as a *Fan* for power and speed, and its
-`Oscillation` child device as a *Switch*. To aim the fan from HomeKit, enable the move switches
-and add them as *Switch* too.
+Natural wind, the oscillation angle and the timer are not exposed. A fan in natural wind stays
+in it when the speed changes.
+
+One accessory for the humidifier:
+
+| Control | Notes |
+|---|---|
+| Power | |
+| Mode | *Auto* is the humidifier's automatic mode. *Humidify* is a manual level |
+| Speed | The manual level: up to 33 % low, up to 66 % medium, above that high |
+| Target humidity | Kept within 30-80 % |
+| Current humidity, water level | The water level scale is python-miio's and was not measured |
+| Child lock | |
+
+The temperature, the dry mode and the clean mode are not exposed. A `light` kept `on` sets the
+screen to its brightest level; a dim screen counts as on.
 
 ## Device behaviour
 
-[docs/local-api.md](docs/local-api.md) records how both models behave on the wire, as measured
-on real devices.
+[docs/local-api.md](docs/local-api.md) records how the devices behave on the wire, as measured
+on real ones. The plugin relies on it. For the humidifier only reads were measured.
 
-## Tests
+## Development
 
-The tests run the driver on a real hub against a fake fan. See [tests/README.md](tests/README.md).
+```
+npm test            # unit and integration tests against a fake device on localhost
+npm run typecheck
+npm run fmt
+```
+
+`test/support/fake-device.ts` answers miio as any of the three models, following the measured
+behaviour, and can be told to stop answering, lose a reply or change state as if someone used
+the remote. How it takes writes as the humidifier is an assumption taken from the spec.
 
 ## License
 
