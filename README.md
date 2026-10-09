@@ -37,7 +37,7 @@ Set these in the device preferences:
 | Poll interval | Seconds between state reads, 30 by default |
 | Buzzer, Indicator light, Child lock | `on` or `off`: the driver keeps the fan at that value. `unmanaged`: left alone |
 | Hub modes treated as night | Comma-separated hub mode names, `Night` by default |
-| Buzzer, light, lock at night | Value used while the hub is in a night mode. `same`: the day value |
+| Buzzer, light, lock at night | Value used while the hub is in a night mode. `same`: the day value. With an `unmanaged` day value, the fan gets back what it had before the night |
 | Create left and right move switches | Adds the `Move Left` and `Move Right` child switches, off by default |
 
 ## What the device exposes

@@ -112,8 +112,13 @@ def updated() {
 
 def initialize() {
     unschedule()
+    // Kept across the reset: it is what the fan had before the night values were written.
+    Map beforeNight = state.beforeNight
     state.clear()
     state.queue = []
+    if (beforeNight) {
+        state.beforeNight = beforeNight
+    }
     sendEvent(name: "supportedFanSpeeds", value: JsonOutput.toJson(SPEEDS + ["on", "off"]))
     if (!settings.ip || !settings.token) {
         sendEvent(name: "connection", value: "unconfigured")
@@ -489,24 +494,57 @@ private Boolean isNight() {
     return names.contains(location.mode?.toString()?.toLowerCase())
 }
 
+private Boolean kept(pref) {
+    return pref in ["on", "off"]
+}
+
+// While it is night, remembers what the fan had for each setting that the night overrides and
+// that no day preference would put back. Those values are written back when the night ends.
+private void trackNight(Map current, Boolean night) {
+    Map before = (state.beforeNight ?: [:]) as Map
+    if (night) {
+        ENFORCED.each { String key ->
+            if (kept(settings[key + "Night"]) && !kept(settings[key + "Day"]) && !before.containsKey(key)) {
+                before[key] = current[key]
+            }
+        }
+        state.beforeNight = before
+        return
+    }
+    if (!before) {
+        return
+    }
+    state.remove("beforeNight")
+    Map restore = before.findAll { key, value -> !kept(settings[key + "Day"]) && current[key] != value }
+    if (restore) {
+        log.info "the night is over, putting back: ${restore}"
+        writeKept(restore)
+    }
+}
+
 private void enforce(Map current, Boolean night) {
     Map wanted = [:]
     ENFORCED.each { String key ->
         String pref = settings[key + "Day"]
         String atNight = settings[key + "Night"]
-        if (night && atNight in ["on", "off"]) {
+        if (night && kept(atNight)) {
             pref = atNight
         }
-        if (pref in ["on", "off"] && current[key] != (pref == "on")) {
+        if (kept(pref) && current[key] != (pref == "on")) {
             wanted[key] = (pref == "on")
         }
     }
-    // A fan that does not take the value must not be written to on every reply.
+    // Not more often than ENFORCE_INTERVAL_MS: the read after a write comes back at once, and a
+    // fan that refuses the value would be written to in a loop.
     if (!wanted || now() - ((state.enforcedAt ?: 0) as Long) < ENFORCE_INTERVAL_MS) {
         return
     }
     state.enforcedAt = now()
     log.info "restoring kept settings: ${wanted}"
+    writeKept(wanted)
+}
+
+private void writeKept(Map wanted) {
     if (isMiot()) {
         miotSet(wanted)
         return
@@ -793,6 +831,7 @@ private void applyState(Map s) {
     state.confirmed = s
     publish(s)
     settle(s)
+    trackNight(s, night)
     enforce(s, night)
 }
 
